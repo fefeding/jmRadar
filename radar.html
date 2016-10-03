@@ -1,0 +1,431 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+   <meta charset="utf-8">
+  <meta content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no" name="viewport">
+  <meta content="yes" name="apple-mobile-web-app-capable">
+  <meta content="black" name="apple-mobile-web-app-status-bar-style">
+  <meta content="telephone=no" name="format-detection">
+  <meta content="email=no" name="format-detection">
+   <title>雷达图</title>
+   <script type="text/javascript">
+       /**
+         * 雷达图
+         */
+       var radar = function(option) {
+          this.option = option||{};
+          if(!this.option.canvas) {
+            this.option.canvas = document.createElement('canvas');
+            this.option.container.appendChild(this.option.canvas);
+          }
+          this.canvas = this.option.canvas;
+          if(this.option.width) this.canvas.width = this.option.width;
+          if(this.option.height) this.canvas.height = this.option.height;
+          //边界
+          this.option.marginLeft = this.option.marginLeft||8;
+          this.option.marginTop = this.option.marginTop||8;
+          this.option.marginRight = this.option.marginRight||8;
+          this.option.marginBottom = this.option.marginBottom||8;
+          //各维度上的最大值和最小值设定
+          this.option.maxValues = this.option.maxValues || [];
+          this.option.minValues = this.option.minValues || [];
+          //图颜 色
+          this.option.serieStyle = this.option.serieStyle|| [
+                  {
+                    'strokeStyle': 'rgba(224,41,41,0.5)',
+                    'fillStyle': 'rgba(224,41,41,0.2)'
+                  },
+                  {
+                    'strokeStyle': 'rgba(51,153,255,0.5)',
+                    'fillStyle': 'rgba(116,192,211,0.2)'
+                  },
+                  {
+                    'strokeStyle': 'rgba(116,192,211,0.8)',
+                    'fillStyle': 'rgba(116,192,211,0.4)'
+                  }
+                ];
+
+          //雷达图轴上的刻度个数
+          this.hCount = this.option.hCount || 3;
+          
+          this.context = this.canvas.getContext('2d');
+        }
+
+        /**
+         * 开始画图
+         * 
+         * @param data [Array] 一个二维数组，一维表示线条条数，二维表示各维度值
+         * @param vCount [Number] 表示二维个数，也就是雷达图的顶点个数
+         */
+        radar.prototype.draw = function(data, vCount) {
+
+          this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          
+          //设置样式
+          if(this.option.style && typeof this.option.style == 'object') 
+            for(var k in this.option.style) this.context[k] = this.option.style[k];
+
+          this.data = data || this.data;
+          //如果没有指定，则取第一个数据的条数
+          if(!vCount) vCount = this.option.vCount;
+          if(!vCount && this.data && this.data.length) vCount = this.data[0].length;
+          vCount = Math.max(3, vCount);
+          this.vCount = vCount;
+
+          //边柜
+          this.bounds = {
+            x: this.option.marginLeft,
+            y: this.option.marginTop,
+            width: this.canvas.width - this.option.marginLeft - this.option.marginRight,
+            height: this.canvas.height - this.option.marginTop - this.option.marginBottom
+          }
+          //计算中心点
+          this.center = {
+            x: this.bounds.width / 2 + this.bounds.x,
+            y: this.bounds.height / 2 + this.bounds.y
+          };
+          //每个顶点角度偏移量
+          this.angleStep = 360/ vCount;
+          //取最小边做半径
+          this.radius = Math.min(this.bounds.width, this.bounds.height) / 2;
+
+          //初始化数据Y维度
+          this.yAxises = [];
+          //每个维度点的角度
+          var rotateStep = Math.PI * 2 / vCount;
+          for(var i=0;i<vCount;i++) {
+            var axis = {
+              rotate: Math.PI/2 + rotateStep * i, //从向上90度开始
+            };
+            axis.cos = Math.cos(axis.rotate);
+            axis.sin = Math.sin(axis.rotate);
+            this.yAxises.push(axis);
+          }
+
+		this.drawBaseLine(this.vCount); //画基线
+		
+		//生成线图
+		var series = this.createSeries(this.data);
+		
+		//如果指定为顺时针，则从最后一个开始画
+		if(this.option.clockwise) series.reverse();
+		//从最后一个开始画
+		for(var i=0; i < series.length; i++) {
+			var serie = series[i];
+			this.context.save();
+			//设置样式
+			if(serie.style && typeof serie.style == 'object') 
+				for(var k in serie.style) this.context[k] = serie.style[k];
+
+            this.context.beginPath();
+
+			for(var j=0;j<serie.points.length;j++) {
+				var point = serie.points[j];
+				if(j===0) {
+					this.context.moveTo(point.x, point.y);
+				}
+				else {
+					this.context.lineTo(point.x, point.y);
+				}
+			}
+			this.context.closePath();				
+			if(serie.style && serie.style.strokeStyle) this.context.stroke();
+			//如果 指定了多维度填充色，则需要重画区域
+			if(serie.style && serie.style.fillStyle && typeof serie.style.fillStyle == 'object') {
+				for(var j=0;j<serie.style.fillStyle.length;j++) {
+					var s = serie.style.fillStyle[j%serie.style.fillStyle.length];
+					//此区域的起始点和结束点，和这个图的中心组成一个三角区域
+					var p1 = serie.points[j];
+					//取不到开始点，表示样式设多了
+					if(!p1) continue;
+					var p2 = serie.points[j+1]||serie.points[0];
+					this.context.fillStyle = s;//设定此区域的填充色
+					this.context.beginPath();
+					this.context.moveTo(p1.x, p1.y);
+					this.context.lineTo(p2.x, p2.y);
+					this.context.lineTo(this.center.x, this.center.y);
+					this.context.closePath();
+					this.context.fill();
+				}
+			}
+			else {				
+				if(serie.style && serie.style.fillStyle) this.context.fill();
+			}
+			this.context.restore();
+		}
+	}
+
+        /**
+         * 画雷达图的基础线条
+         */
+        radar.prototype.drawBaseLine = function(vCount) {       
+          //刻度单位长
+          var xstep = this.radius / this.hCount;
+          this.context.save();
+          //设置样式
+          if(this.option.baseLineStyle && typeof this.option.baseLineStyle == 'object') 
+            for(var k in this.option.baseLineStyle) this.context[k] = this.option.baseLineStyle[k];
+          else this.context.strokeStyle = this.option.baseLineStyle || '#000';
+          //this.context.globalCompositeOperation = 'source-atop'; 
+          
+          //维度大于2，且指定了要画方型，才画多边型底，否则为圆
+          if(vCount > 2 && this.option.baseArc===false) {
+			//如果维度小于等于3条的话，把整个重心向下移一段距离，保证图占满整个canas高度
+			//特殊情况
+			if(vCount <= 3) {
+				//重新计算半径，让图点据2*this.radius高度
+				var r = 2 * this.radius / (Math.cos(Math.PI / 3) + 1);
+				//重心下移新增的半径高度
+				this.center.y += r - this.radius;
+				this.radius = r;
+				//半径改变，重算刻度
+				xstep = this.radius / this.hCount;
+			}
+            for(var i=1;i<=this.hCount;i++) {
+              var r = xstep * i;
+              //最外层重点颜色
+				//if(i < this.hCount) this.context.lineWidth = 0.6;
+				//else this.context.lineWidth = 1;
+
+              this.context.beginPath();
+
+              //var lastx=0,lasty=0;
+              for(var j=0;j<this.yAxises.length;j++) {
+                var axis = this.yAxises[j];
+                //从顶角开始
+                var startx = this.center.x + axis.cos * r;
+                var starty = this.center.y - axis.sin * r;    
+                //移至起始点     
+                if(j > 0) {
+                  this.context.lineTo(startx, starty);
+                }
+                else {
+                  this.context.moveTo(startx, starty);
+                }
+                //lastx = startx;
+                //lasty = starty;
+              }
+
+				this.context.closePath();	
+				this.context.stroke();
+			}
+		}
+		else {
+			//圆角度 360
+			var cratate = Math.PI * 2;
+			for(var i=1;i<=this.hCount;i++) {
+				var r = xstep * i;
+				//最外层重点颜色
+				//if(i < this.hCount) this.context.lineWidth = 0.8;
+				//else this.context.lineWidth = 1;
+
+				this.context.beginPath();
+				this.context.arc(this.center.x, this.center.y, r, 0, cratate);
+				//drawArc(this.context, this.center.x, this.center.y, r, 0.1);
+				this.context.closePath();				
+				this.context.stroke();
+			}
+		}		
+
+		//画维度发散线条
+		this.context.lineWidth = .6;
+		for(var j=0;j<this.yAxises.length;j++) {
+			var axis = this.yAxises[j];
+			//从顶点开始
+			this.context.moveTo(this.center.x, this.center.y);
+			var startx = this.center.x + axis.cos * this.radius;
+			var starty = this.center.y - axis.sin * this.radius;		
+			this.context.lineTo(startx, starty);
+			this.context.stroke();
+			//画维度标识
+			if(this.option.labels && this.option.labels.length > j) {
+				this.context.save();
+				//设置样式
+				if(this.option.labelStyle && typeof this.option.labelStyle == 'object') 
+					for(var k in this.option.labelStyle) this.context[k] = this.option.labelStyle[k];
+				else this.context.strokeStyle = this.option.labelStyle || '#000';
+
+              var label = this.option.labels[j];        
+              var size = this.context.measureText?this.context.measureText(label):{width: 15};
+              //一个中文字的宽也可以当高用
+              size.height = this.context.measureText?this.context.measureText('中').width+2:15;
+
+              //计算字的位置，让中心对准轴的延长级,  注意，canvas画图的坐标是左下角起
+              var x = startx + size.height * axis.cos - size.width / 2;
+              var y = starty + size.height/2 - size.height * axis.sin;        
+              
+              //如果设置不旋转label
+              if(this.option.rotateLabel !== false) {
+                var offx = x+size.width/2;
+                var offy = y-size.height/2;
+                this.context.translate(offx,offy);
+                //如果在水平线下方，则把字向放正，否则不需要
+                if(axis.rotate > Math.PI && axis.rotate < Math.PI * 2) {
+                  this.context.rotate(Math.PI*3/2-axis.rotate);
+                }
+                else {
+                  this.context.rotate(Math.PI/2-axis.rotate);
+                }
+                this.context.translate(-offx,-offy);  
+              }
+                    
+              this.context.fillText(label,x,y);
+              this.context.restore();
+            }
+          }
+          //如果有指定刻度，则画到顶轴上
+          if(this.option.xLabels && this.option.xLabels.length) {
+            this.context.save();
+            //设置样式
+			var style = this.option.xLabelStyle || this.option.labelStyle;
+			if(style && typeof style == 'object') 
+				for(var k in style) this.context[k] = style[k];
+			else this.context.strokeStyle = style || '#000';
+        
+            var size = this.context.measureText?this.context.measureText('中'):{width: 15};
+            var dy = size.width/2;
+            //计算每个刻度单位像素
+            var xstep = this.radius / (this.option.xLabels.length-1);
+            for(var i=0;i<this.option.xLabels.length;i++) {
+              var label = this.option.xLabels[i];
+              if(label) this.context.fillText(label, this.center.x + dy, this.center.y - xstep * i + dy);
+            }
+            this.context.restore();
+          }
+          this.context.restore();   
+        }
+        //生成线条
+        radar.prototype.createSeries = function(data) {
+          //生成图形
+          this.series = [];
+          for(var i=0;i<data.length;i++) {
+            var serie = {
+              points: [],
+              radiuses: [],
+              values: []
+            };
+            //线条颜色
+            var index = i%this.option.serieStyle.length;
+            serie.style = this.option.serieStyle[index];
+            //计算每个维度的最大值
+            var cdata = data[i];
+            for(var j=0;j<this.yAxises.length;j++) {
+              var axis = this.yAxises[j];
+              var d = cdata[j]||0;
+              axis.maxValue = Math.max(d, axis.maxValue||0, this.option.maxValues[j]||0);
+              serie.values.push(d);
+            }
+            this.series.push(serie);
+          }
+
+          var radius = this.radius;
+          //计算每个维度的单位长度
+          for(var j=0;j<this.yAxises.length;j++) {
+            var axis = this.yAxises[j];
+            axis.minValue = this.option.minValues[j]||0;
+            //每个单位值占的长度
+            //加上最小值设定，这样有可能把点往外移
+            axis.yStep = axis.maxValue==0?0:radius / (axis.maxValue-axis.minValue);
+
+            for(var i=0;i<this.series.length;i++) {
+              var serie = this.series[i];
+              var value = serie.values[j]||0;
+              value -= axis.minValue; //需要减去最小值设定,因为原点就是减掉最小值的
+              //计算这条数据在这个维度上的长度像素
+              var r = value * axis.yStep;
+              serie.radiuses.push(r);
+              serie.points.push({
+                x: axis.cos * r + this.center.x,
+                y: this.center.y - axis.sin * r
+              })
+            }
+          }
+          return this.series;
+        }
+   </script>
+</head>
+<body>
+
+<canvas id="suggest_radar"></canvas>
+<br />
+
+<input type="checkbox" id="chkarc" /><label for="chkarc">圆底</label>
+<br />
+<label>刻度数</label><input value="5" id="txthcount" style="width:28px" type="number"/>
+<br />
+<button id="btnredraw">重绘</button>
+<script>
+    var container = document.getElementById('suggest_radar');
+      var w = Math.min(window.innerWidth, 360);
+      var h = w * 0.6;
+      container.style.width = w + 'px';
+      container.style.height = h + 'px'
+
+    var chart = new radar({
+        canvas: document.getElementById('suggest_radar'),
+        width: w*2,  //在style中设定为340px，这里用680，就是为了先放大画图，再用style缩小防止锯齿
+        height: h*2,
+        hCount: 6, //雷达图的底线条数
+        labels: ['余额+', '稳健理财', '浮动收益'],
+        xLabels: ['','0%','','50%','','','100%'],//顶轴刻度
+        baseArc: false,
+        marginLeft: 35,
+        marginTop: 40,
+        marginRight: 35,
+        marginBottom: 35,
+				style: {'font': "24px 宋体", lineWidth:1}, //基础样式
+				labelStyle: {'strokeStyle':'#888','fillStyle':'#888', 'font': "24px 宋体", lineWidth:1}, //周边标签颜色
+				xLabelStyle: {'strokeStyle':'#000','fillStyle':'#000', 'font': '16px 宋体'},
+				rotateLabel: false,//不旋转标签
+				clockwise: true, //是否顺时针开始画，如果为true则从最后一个开始画
+        baseLineStyle: {
+					'strokeStyle': '#eaeaf1', 
+					'lineWidth':1//,
+          //'shadowBlur': 20,
+          //'shadowColor': 'rgb(255,255,255)',
+          //'shadowOffsetX': 1,
+          //'shadowOffsetY': 1
+        }, //基础线条样式
+        //各图的样式
+        serieStyle: [            
+            {
+              'strokeStyle': 'transparent',
+              //如果用纯色，就直接配成 fillStyle:'rgba(38,126,249,0.2)',  配成数组多个的话，是为了显示成三D效果，每面不同的颜色
+              'fillStyle': ['rgba(216,233,253,0.9)','rgba(178,201,229,0.9)','rgba(206,224,246,.9)','rgba(38,126,249,0.6)','rgba(38,126,249,0.6)']
+            },
+            {
+              'strokeStyle': 'transparent',
+              'fillStyle': ['rgba(44,131,255,0.8)','rgba(8,76,249,0.8)','rgba(19,117,255,0.8)','rgba(175,15,18,0.4)','rgba(175,15,18,0.4)']
+            },
+            {
+              'strokeStyle': 'transparent',
+              'fillStyle': ['rgba(108,252,131,0.2)','rgba(108,252,131,0.6)','rgba(108,252,131,0.4)','rgba(108,252,131,0.4)','rgba(108,252,131,0.4)']
+            }
+          ],
+        minValues: [-16.6,-16.6,-16.6,-16.6,-16.6], //最小值配置，如果不配。默认为0
+        maxValues: [100,100,100,100,100] //各维度的最大值，如果不设定，将取数据中的最大值
+      });
+   
+    chart.draw([[80,10,10],[20,70,10]]);//,[20,30,50]
+
+   document.getElementById('btnredraw').onclick=(function(){
+        chart.option.baseArc = document.getElementById('chkarc').checked;
+
+        chart.draw(createData());
+      });
+
+    function createData() {
+        var num = document.getElementById('txthcount').value;
+        var data = [];
+        for(var j=0;j<3;j++) {
+          var d = [];
+          for(var i=0;i<num;i++) {
+            d.push(Math.random() * 100);
+          }
+          data.push(d);
+        }
+        return data;
+      }
+</script>
+</body>
+</html>
